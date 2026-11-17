@@ -1,0 +1,20 @@
+{{/* Top bar with the menu and the logout button.
+  Data: the signed-in *store.User.
+*/}}
+{{ define "nav" }}
+  <header class="border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+    <div class="mx-auto flex max-w-5xl items-center gap-8 px-6 py-3">
+      <a href="/" class="font-semibold text-zinc-900 dark:text-zinc-100">frpdash</a>
+
+      <nav class="flex flex-1 gap-6 text-sm">
+        <a href="/">Clients</a>
+        <a href="/clients/new">Add client (frpc)</a>
+        <a href="/settings">Settings</a>
+      </nav>
+
+      <form method="post" action="/logout">
+        <button class="btn-link">Log out ({{ .Username }})</button>
+      </form>
+    </div>
+  </header>
+{{ end }}

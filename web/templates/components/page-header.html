@@ -1,0 +1,15 @@
+{{/* Page title with an optional note and an optional action button on the right.
+  Props (dict): Title, Note, ActionHref, ActionLabel.
+*/}}
+{{ define "page-header" }}
+  <div class="mb-6 flex items-center justify-between">
+    <h1 class="page-title">
+      {{ .Title }}
+      {{ with .Note }}<span class="muted text-base font-normal">{{ . }}</span>{{ end }}
+    </h1>
+
+    {{ with .ActionHref }}
+      <a class="btn btn-primary" href="{{ . }}">{{ $.ActionLabel }}</a>
+    {{ end }}
+  </div>
+{{ end }}

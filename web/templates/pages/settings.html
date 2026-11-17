@@ -1,0 +1,66 @@
+{{ define "title" }}Settings · frpdash{{ end }}
+
+{{ define "content" }}
+  {{ template "page-header" (dict "Title" "Settings") }}
+
+
+  <section class="card mb-6">
+    <dl class="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-[14rem_1fr]">
+      <dt class="muted">VDS address</dt>
+      <dd><code>{{ .PublicHost }}</code></dd>
+
+      <dt class="muted">frps bind port</dt>
+      <dd><code>{{ .Global.BindPort }}</code> <span class="muted">(tcp, and udp for kcp)</span></dd>
+
+      <dt class="muted">Public port range</dt>
+      <dd><code>{{ .Global.PortRange.Min }}–{{ .Global.PortRange.Max }}</code></dd>
+
+      <dt class="muted">Client connections (agents)</dt>
+      <dd><code>{{ .AgentAddr }}</code></dd>
+
+      <dt class="muted">Certificate fingerprint</dt>
+      <dd><code class="break-all">{{ .Fingerprint }}</code></dd>
+
+      <dt class="muted">frps</dt>
+      <dd>{{ template "running-badge" .FRPSRunning }} <span class="muted">frp {{ .FRPVersion }}</span></dd>
+    </dl>
+
+    <p class="muted mt-6 text-sm">
+      Open the frps bind port and the public range in the VDS firewall. Keep the panel port closed and reach it over
+      SSH.
+    </p>
+  </section>
+
+  {{ with .Firewall }}
+    <section class="card mb-6">
+      <h2 class="section-title">Firewall</h2>
+      {{ template "firewall" . }}
+
+
+      <div class="mt-4 flex flex-wrap items-center gap-3">
+        {{ if .Status.Supported }}
+          <form method="post" action="/settings/firewall">
+            <button class="btn {{ if .Err }}btn-primary{{ end }}">
+              {{ if .Err }}
+                Try again
+              {{ else }}
+                {{ .Status.Action }}
+              {{ end }}
+            </button>
+          </form>
+        {{ end }}
+        <a class="btn" href="/settings">Refresh status</a>
+      </div>
+    </section>
+  {{ end }}
+
+  {{ if .FRPSLogs }}
+    <section class="card">
+      <h2 class="section-title">frps log</h2>
+      {{/* Whitespace inside <pre> is shown as is, so Prettier must not indent it. */}}
+      <!-- prettier-ignore -->
+      <pre class="code-block max-h-96 overflow-y-auto">{{ range .FRPSLogs }}{{ . }}
+{{ end }}</pre>
+    </section>
+  {{ end }}
+{{ end }}

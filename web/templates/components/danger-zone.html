@@ -1,0 +1,13 @@
+{{/* A red card with a destructive action, confirmed before it runs.
+  Props (dict): Title, Text, Action (POST URL), Confirm (question), Button (label).
+*/}}
+{{ define "danger-zone" }}
+  <section class="card border-red-200 dark:border-red-900">
+    <h2 class="section-title">{{ .Title }}</h2>
+    <p class="muted mb-4 text-sm">{{ .Text }}</p>
+
+    <form method="post" action="{{ .Action }}" hx-post="{{ .Action }}" hx-confirm="{{ .Confirm }}">
+      <button class="btn btn-danger">{{ .Button }}</button>
+    </form>
+  </section>
+{{ end }}

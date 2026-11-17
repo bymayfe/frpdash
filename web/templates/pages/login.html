@@ -1,0 +1,21 @@
+{{ define "title" }}Log in · frpdash{{ end }}
+
+{{ define "content" }}
+  <section class="card mx-auto mt-16 max-w-sm">
+    <h1 class="page-title mb-6">frpdash</h1>
+
+    <form method="post" action="/login" class="flex flex-col gap-4">
+      <label class="field">
+        Username
+        <input class="input" name="username" autocomplete="username" required autofocus />
+      </label>
+
+      <label class="field">
+        Password
+        <input class="input" name="password" type="password" autocomplete="current-password" required />
+      </label>
+
+      <button class="btn btn-primary mt-2">Log in</button>
+    </form>
+  </section>
+{{ end }}

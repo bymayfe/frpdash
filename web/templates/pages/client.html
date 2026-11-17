@@ -1,0 +1,30 @@
+{{ define "title" }}{{ .Client.Name }} · frpdash{{ end }}
+
+{{ define "content" }}
+  <div class="mb-2 flex items-center justify-between">
+    <h1 class="page-title">{{ .Client.Name }} {{ template "status-badge" .Client }}</h1>
+
+    <form method="post" action="/clients/{{ .Client.ID }}/pair">
+      <button class="btn">{{ if .Client.Paired }}Re-pair{{ else }}Install command{{ end }}</button>
+    </form>
+  </div>
+
+  <p class="muted mb-8 text-sm">
+    Config:
+    {{ template "config-state" .Client }}
+    {{ if .Client.PortMin }}· VDS ports limited to {{ .Client.PortMin }}–{{ .Client.PortMax }}{{ end }}
+  </p>
+
+  <h2 class="section-title">Services</h2>
+  {{ template "proxy-table" . }}
+
+  {{ template "proxy-form" .Client.ID }}
+
+  {{ template "danger-zone" (dict
+    "Title" "Delete client"
+    "Text" "Removes its services and visitor grants. The agent will be refused on its next connect."
+    "Action" (printf "/clients/%d/delete" .Client.ID)
+    "Confirm" (printf "Delete client %s and all its services?" .Client.Name)
+    "Button" (printf "Delete %s" .Client.Name))
+  }}
+{{ end }}

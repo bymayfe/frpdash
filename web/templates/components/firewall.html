@@ -1,0 +1,86 @@
+{{/* The ports frpdash needs and, after opening them, the commands that ran.
+  Data: *firewallView (.Rules, .Steps, .Err, .Status).
+*/}}
+{{ define "firewall" }}
+  {{ template "firewall-rules" .Rules }}
+  {{ template "firewall-steps" . }}
+
+  {{ if .Managed }}
+    <p class="mb-2 text-sm">
+      <span class="badge online">automatic</span>
+      frpdash opens a public service's VDS port when you add the service and closes it when you delete it.
+    </p>
+  {{ else }}
+    <p class="mb-2 text-sm">
+      Public services' VDS ports are added to this list as you create them. Once you let frpdash open the ports, it
+      keeps them in step automatically.
+    </p>
+  {{ end }}
+
+
+  <p class="muted text-sm">
+    {{ template "firewall-state" .Status }}
+    If your provider has its own firewall (a "security group" in its web panel), open the same ports there too.
+  </p>
+{{ end }}
+
+{{/* Table of required ports.
+  Data: []firewall.Rule.
+*/}}
+{{ define "firewall-rules" }}
+  <table class="mb-4 table">
+    <thead>
+      <tr>
+        <th>Port</th>
+        <th>Used for</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range . }}
+        <tr>
+          <td><code>{{ .String }}</code></td>
+          <td>{{ .Purpose }}</td>
+        </tr>
+      {{ end }}
+    </tbody>
+  </table>
+{{ end }}
+
+{{/* The commands run while opening the ports, each ok or failed.
+  Data: *firewallView (.Steps, .Err).
+*/}}
+{{ define "firewall-steps" }}
+  {{ if .Steps }}
+    <h3 class="mb-2 text-sm font-semibold">Commands run</h3>
+    <ul class="mb-4 flex flex-col gap-1 text-sm">
+      {{ range .Steps }}
+        <li>
+          {{ if .Err }}
+            <span class="badge pending">failed</span>
+          {{ else }}
+            <span class="badge online">ok</span>
+          {{ end }}
+          <code>{{ .Command }}</code>
+          {{ if .Err }}<div class="muted mt-1 ml-1 text-xs">{{ .Err }}: {{ .Output }}</div>{{ end }}
+        </li>
+      {{ end }}
+    </ul>
+  {{ end }}
+
+  {{ if .Err }}
+    <div class="alert-error">Opening the ports stopped at an error: {{ .Err }}</div>
+  {{ end }}
+{{ end }}
+
+{{/* One sentence about the firewall found on the server.
+  Data: firewall.Status.
+*/}}
+{{ define "firewall-state" }}
+  {{ if eq .Kind "ufw" }}
+    Firewall: ufw ({{ if .Active }}active{{ else }}inactive{{ end }}).
+  {{ else if eq .Kind "firewalld" }}
+    Firewall: firewalld ({{ if .Active }}running{{ else }}not running{{ end }}).
+  {{ else }}
+    No ufw or firewalld found on this server.
+  {{ end }}
+{{ end }}

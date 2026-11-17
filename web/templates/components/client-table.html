@@ -1,0 +1,55 @@
+{{/* The list of clients. Also served alone at /clients/table for the 5 s refresh.
+  Data: page data with .Clients ([]clientView).
+*/}}
+{{ define "client-table" }}
+  {{ if .Clients }}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Status</th>
+          <th>Services</th>
+          <th>Config</th>
+          <th>Last seen</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .Clients }}
+          <tr>
+            <td><a class="font-medium" href="/clients/{{ .ID }}">{{ .Name }}</a></td>
+            <td>{{ template "status-badge" . }}</td>
+            <td>{{ .ProxyCount }}</td>
+            <td>{{ template "config-state" . }}</td>
+            <td>{{ template "last-seen" . }}</td>
+          </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  {{ else }}
+    {{ template "empty-state" (dict "Text" "No clients yet." "LinkHref" "/clients/new" "LinkLabel" "Add the first one.") }}
+  {{ end }}
+{{ end }}
+
+{{/* Whether the client runs the latest config.
+  Data: a client (.AppliedRev, .DesiredRev).
+*/}}
+{{ define "config-state" }}
+  {{ if eq .AppliedRev .DesiredRev }}
+    <span class="muted">up to date</span>
+  {{ else }}
+    <span class="text-amber-600 dark:text-amber-400">pending (rev {{ .AppliedRev }} → {{ .DesiredRev }})</span>
+  {{ end }}
+{{ end }}
+
+{{/* When the client was last connected.
+  Data: a client view (.Online, .LastSeenAt).
+*/}}
+{{ define "last-seen" }}
+  {{ if .Online }}
+    now
+  {{ else if .LastSeenAt.IsZero }}
+    <span class="muted">never</span>
+  {{ else }}
+    {{ .LastSeenAt.Format "2006-01-02 15:04" }}
+  {{ end }}
+{{ end }}

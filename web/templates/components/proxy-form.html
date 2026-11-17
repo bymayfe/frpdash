@@ -1,0 +1,58 @@
+{{/* "Add service" form for a client: a tunnel from the VDS (or another client) to a program on this machine.
+  Data: the client ID (int64).
+  Fields marked public-only are hidden while "private" is selected (CSS :has, see web/tailwind.css).
+*/}}
+{{ define "proxy-form" }}
+  <section class="card mb-8">
+    <h2 class="section-title mb-1">Add service</h2>
+    <p class="muted mb-6 text-sm">Make a program running on this machine reachable through the VDS.</p>
+
+    <form method="post" action="/clients/{{ . }}/proxies" class="proxy-form grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <label class="field">
+        Name
+        <input class="input" name="name" pattern="[a-z0-9][a-z0-9_\-]{0,31}" placeholder="ssh" required />
+        <span class="hint">A name for you, e.g. ssh, web, nextcloud.</span>
+      </label>
+
+      <label class="field">
+        Mode
+        <select class="input" name="mode">
+          <option value="public">public: reachable from the internet</option>
+          <option value="private">private: only clients you allow</option>
+        </select>
+        <span class="hint">Private services open no port on the VDS.</span>
+      </label>
+
+      <label class="field">
+        Local IP
+        <input class="input" name="local_ip" value="127.0.0.1" />
+        <span class="hint">Where the program listens on this machine; usually 127.0.0.1.</span>
+      </label>
+
+      <label class="field">
+        Local port
+        <input class="input" name="local_port" type="number" min="1" max="65535" placeholder="8000" required />
+        <span class="hint">The program's port on this machine, e.g. 22 for SSH.</span>
+      </label>
+
+      <label class="field public-only">
+        Protocol
+        <select class="input" name="type">
+          <option>tcp</option>
+          <option>udp</option>
+        </select>
+        <span class="hint">tcp for web, SSH and most programs.</span>
+      </label>
+
+      <label class="field public-only">
+        VDS port
+        <input class="input" name="remote_port" type="number" min="1" max="65535" placeholder="auto" />
+        <span class="hint"
+          >Reached at VDS_IP:this port. Empty picks the next free one; it is opened in the firewall.</span
+        >
+      </label>
+
+      <button class="btn btn-primary sm:col-span-2">Add service</button>
+    </form>
+  </section>
+{{ end }}

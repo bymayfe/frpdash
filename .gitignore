@@ -1,0 +1,10 @@
+/bin/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+/data/
+.env
+coverage.out
+.directory
+node_modules/

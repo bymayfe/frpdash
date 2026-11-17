@@ -1,0 +1,7 @@
+{{/* Error and success messages at the top of a page.
+  Data: anything with .Error and .Flash (strings).
+*/}}
+{{ define "alerts" }}
+  {{ if .Error }}<div class="alert-error">{{ .Error }}</div>{{ end }}
+  {{ if .Flash }}<div class="alert-ok">{{ .Flash }}</div>{{ end }}
+{{ end }}

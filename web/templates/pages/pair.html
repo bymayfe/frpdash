@@ -1,0 +1,49 @@
+{{ define "title" }}Connect {{ .Client.Name }} · frpdash{{ end }}
+
+{{ define "content" }}
+  <section class="card mx-auto max-w-3xl">
+    <h1 class="page-title mb-2">Connect “{{ .Client.Name }}”</h1>
+    <p class="muted mb-6">
+      Run this once on the machine you want to connect (the frpc side, e.g. your home PC). It downloads
+      <code>frpdash</code> from this server, pairs with it and installs the <code>frpdash-agent</code> service.
+    </p>
+
+    {{ template "code-block" .InstallCmd }}
+
+    {{/* Polled every 2 s; moves on to the client's page once its agent is connected. */}}
+    <div
+      class="mt-6 rounded-lg border border-zinc-200 px-4 py-3 text-sm dark:border-zinc-800"
+      hx-get="/clients/{{ .Client.ID }}/pair-status?t={{ .Token }}"
+      hx-trigger="every 2s"
+      hx-swap="innerHTML"
+    >
+      {{ template "pair-status" . }}
+    </div>
+
+    <p class="muted mt-6 text-xs">
+      The command works once and expires at {{ .Expires.Format "15:04" }} ({{ printf "%.0f" .TTL.Minutes }} min). It
+      pins this server's certificate ({{ .AgentAddr }}), so the client trusts only this server.
+    </p>
+
+    <details class="mt-2 text-xs">
+      <summary class="muted cursor-pointer">No curl on that machine?</summary>
+      <p class="mt-2 mb-2">Copy the <code>frpdash</code> binary there and run this instead:</p>
+      {{ template "code-block" (printf "sudo ./frpdash connect %s" .Code) }}
+    </details>
+  </section>
+{{ end }}
+
+{{/* How far the client got. Data: page data with .PairState (fleet.Pairing*) and .Client. */}}
+{{ define "pair-status" }}
+  {{ if eq .PairState "used" }}
+    <span class="badge pending">paired</span>
+    Waiting for the agent on <strong>{{ .Client.Name }}</strong> to connect…
+  {{ else if eq .PairState "expired" }}
+    <span class="badge offline">expired</span>
+    This command can no longer be used.
+    <a href="/clients/{{ .Client.ID }}">Open {{ .Client.Name }}</a> and create a new one.
+  {{ else }}
+    <span class="badge offline">waiting</span>
+    Waiting for you to run the command on <strong>{{ .Client.Name }}</strong>… This page moves on by itself.
+  {{ end }}
+{{ end }}

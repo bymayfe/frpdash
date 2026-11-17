@@ -1,0 +1,10 @@
+{{ define "title" }}Clients · frpdash{{ end }}
+
+{{ define "content" }}
+  {{ template "page-header" (dict "Title" "Clients" "Note" "(frpc)" "ActionHref" "/clients/new" "ActionLabel" "Add client") }}
+
+  {{/* Refreshed every 5 s so online status stays current. */}}
+  <div hx-get="/clients/table" hx-trigger="every 5s" hx-swap="innerHTML">
+    {{ template "client-table" . }}
+  </div>
+{{ end }}

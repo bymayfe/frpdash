@@ -1,0 +1,17 @@
+{{ define "title" }}Add client · frpdash{{ end }}
+
+{{ define "content" }}
+  <section class="card mx-auto max-w-lg">
+    <h1 class="page-title mb-6">Add client <span class="muted text-base font-normal">(frpc machine)</span></h1>
+
+    <form method="post" action="/clients" class="flex flex-col gap-6">
+      <label class="field">
+        Name
+        <input class="input" name="name" pattern="[a-z0-9][a-z0-9_\-]{0,31}" placeholder="home-pc" required autofocus />
+        <span class="hint">a-z, 0-9, '-' or '_'. Also used as the client's frp user name.</span>
+      </label>
+
+      <button class="btn btn-primary">Create and get the install command</button>
+    </form>
+  </section>
+{{ end }}

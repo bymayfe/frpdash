@@ -1,0 +1,150 @@
+{{ define "title" }}Setup · frpdash{{ end }}
+
+{{ define "content" }}
+  {{ if .Finished }}
+    {{ template "setup-done" . }}
+  {{ else }}
+    {{ template "setup-form" . }}
+  {{ end }}
+{{ end }}
+
+{{/* The first-run form: setup code, admin account, public address, firewall. */}}
+{{ define "setup-form" }}
+  <section class="card mx-auto mt-12 max-w-lg">
+    <h1 class="page-title mb-2">Set up frpdash</h1>
+    <p class="muted mb-6">This server runs frps. Finish the setup once; clients are added afterwards.</p>
+
+    <form method="post" action="/setup" class="flex flex-col gap-6">
+      <label class="field">
+        Setup code
+        <input
+          class="input font-mono"
+          name="code"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="xxxx-xxxx-xxxx-xxxx-xxxx-xxxx"
+          required
+          autofocus
+        />
+        <span class="hint">
+          Printed by the install command. On the server:
+          <code>sudo cat /var/lib/frpdash/setup-code</code>
+        </span>
+      </label>
+
+      {{ if not .HasAdmin }}
+        {{ template "setup-admin" . }}
+      {{ end }}
+
+      {{ template "setup-address" . }}
+
+      {{ with .Firewall }}
+        <fieldset class="flex flex-col gap-3">
+          <legend class="section-title">Firewall</legend>
+
+          {{ template "firewall" . }}
+
+          {{ if .Status.Supported }}
+            <label class="flex items-start gap-3 text-sm">
+              <input type="checkbox" name="open_ports" value="1" class="mt-1" {{ if $.OpenPorts }}checked{{ end }} />
+              <span>
+                {{ .Status.Action }}
+                <span class="hint block">SSH stays reachable: its port is allowed before the firewall is enabled.</span>
+              </span>
+            </label>
+          {{ else }}
+            <p class="hint">frpdash cannot configure the firewall here. Open the ports above yourself.</p>
+          {{ end }}
+        </fieldset>
+      {{ end }}
+
+
+      <button class="btn btn-primary">Finish setup</button>
+    </form>
+  </section>
+{{ end }}
+
+{{/* Admin account fields; skipped when the admin came from FRPDASH_ADMIN_*. */}}
+{{ define "setup-admin" }}
+  <fieldset class="flex flex-col gap-4">
+    <legend class="section-title">Admin account</legend>
+
+    <label class="field">
+      Username
+      <input class="input" name="username" value="{{ .Username }}" autocomplete="username" required />
+    </label>
+
+    <label class="field">
+      Password
+      <input class="input" name="password" type="password" autocomplete="new-password" minlength="10" required />
+    </label>
+
+    <label class="field">
+      Repeat password
+      <input class="input" name="password2" type="password" autocomplete="new-password" minlength="10" required />
+    </label>
+  </fieldset>
+{{ end }}
+
+{{/* Public address, with the addresses found on this server as suggestions. */}}
+{{ define "setup-address" }}
+  <fieldset class="flex flex-col gap-4">
+    <legend class="section-title">Public address</legend>
+
+    <label class="field">
+      IP address or host name clients connect to
+      <input
+        class="input"
+        name="public_host"
+        value="{{ .Host }}"
+        list="addresses"
+        placeholder="203.0.113.10 or vds.example.com"
+        required
+      />
+    </label>
+
+    <datalist id="addresses">
+      {{ range .Addresses }}<option value="{{ .IP }}"></option>{{ end }}
+    </datalist>
+
+    {{ if .Addresses }}
+      <div class="hint">
+        Found on this server:
+        <!-- prettier-ignore -->
+        <span>{{ range $i, $a := .Addresses }}{{ if $i }}, {{ end }}<code>{{ $a.IP }}</code>{{ if $a.Private }} (private){{ end }}{{ end }}.</span>
+        A private address (10.x, 172.16-31.x, 192.168.x) is behind NAT: enter the public IP your provider shows instead.
+      </div>
+    {{ end }}
+  </fieldset>
+{{ end }}
+
+{{/* Shown once setup is saved, while frps and the client listener start. */}}
+{{ define "setup-done" }}
+  <section class="card mx-auto mt-12 max-w-lg">
+    <h1 class="page-title mb-2">Setup complete</h1>
+    <p class="muted mb-6">
+      frpdash is starting frps and the client listener. This takes a few seconds (longer on the first run, while frps is
+      downloaded).
+    </p>
+
+    {{ with .Firewall }}
+      <h2 class="section-title">Firewall</h2>
+      <div class="mb-6">
+        {{ template "firewall" . }}
+        {{ if .Err }}
+          <p class="mt-2 text-sm">
+            Sign in and open <strong>Settings → Firewall</strong> to see the current state and
+            <strong>try again</strong>.
+          </p>
+        {{ else if not .Steps }}
+          <p class="muted mt-2 text-sm">
+            The ports were not opened by frpdash. Open them yourself, or later in Settings → Firewall.
+          </p>
+        {{ end }}
+      </div>
+    {{ end }}
+
+
+    <a class="btn btn-primary" href="/login">Continue to sign in</a>
+  </section>
+{{ end }}

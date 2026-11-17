@@ -1,0 +1,73 @@
+{{/* The services of one client.
+  Data: the client page data (.Proxies, .PublicHost, .Others).
+*/}}
+{{ define "proxy-table" }}
+  {{ if .Proxies }}
+    <table class="mb-8 table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Mode</th>
+          <th>Local</th>
+          <th>Reach it at</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .Proxies }}
+          <tr>
+            <td class="font-medium">{{ .Name }}</td>
+            <td>{{ template "mode-badge" . }}</td>
+            <td><code>{{ .LocalIP }}:{{ .LocalPort }}</code></td>
+            <td>
+              {{ if eq .Mode "public" }}
+                <code>{{ $.PublicHost }}:{{ .RemotePort }}</code>
+              {{ else }}
+                {{ template "visitors" (dict "Proxy" . "Others" $.Others) }}
+              {{ end }}
+            </td>
+            <td class="text-right">
+              <form
+                method="post"
+                action="/proxies/{{ .ID }}/delete"
+                hx-post="/proxies/{{ .ID }}/delete"
+                hx-confirm="Delete service {{ .Name }}?"
+              >
+                <button class="btn btn-danger">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  {{ else }}
+    {{ template "empty-state" (dict "Text" "No services yet.") }}
+  {{ end }}
+{{ end }}
+
+{{/* Who may reach a private (stcp) service, and a form to allow one more client.
+  Props (dict): Proxy (proxyView with .Visitors), Others ([]store.Client).
+*/}}
+{{ define "visitors" }}
+  <div class="flex flex-col gap-1">
+    {{ range .Proxy.Visitors }}
+      <div class="flex items-center gap-3">
+        <code>{{ .ClientName }} → 127.0.0.1:{{ .BindPort }}</code>
+        <form method="post" action="/proxies/{{ .ProxyID }}/visitors/{{ .VisitorClientID }}/delete">
+          <button class="btn-link-danger">revoke</button>
+        </form>
+      </div>
+    {{ else }}
+      <span class="muted">no visitors</span>
+    {{ end }}
+  </div>
+
+  <form method="post" action="/proxies/{{ .Proxy.ID }}/visitors" class="mt-2 flex items-center gap-2">
+    <select class="input w-36" name="client_id" required>
+      <option value="">grant to…</option>
+      {{ range .Others }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}
+    </select>
+    <input class="input w-28" name="bind_port" type="number" min="1" max="65535" placeholder="local port" required />
+    <button class="btn">Grant</button>
+  </form>
+{{ end }}

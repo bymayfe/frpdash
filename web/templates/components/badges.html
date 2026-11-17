@@ -1,0 +1,34 @@
+{{/* Connection status of a client: online, offline (paired) or not paired yet.
+  Data: a client (.Online, .Paired).
+*/}}
+{{ define "status-badge" }}
+  {{- if .Online -}}
+    <span class="badge online">online</span>
+  {{- else if .Paired -}}
+    <span class="badge offline">offline</span>
+  {{- else -}}
+    <span class="badge pending">not paired</span>
+  {{- end -}}
+{{ end }}
+
+{{/* How a service is reached: public tcp/udp or private (stcp).
+  Data: a proxy (.Mode, .Type).
+*/}}
+{{ define "mode-badge" }}
+  {{- if eq .Mode "public" -}}
+    <span class="badge public">public {{ .Type }}</span>
+  {{- else -}}
+    <span class="badge private">private</span>
+  {{- end -}}
+{{ end }}
+
+{{/* Running/stopped badge for a process.
+  Data: bool.
+*/}}
+{{ define "running-badge" }}
+  {{- if . -}}
+    <span class="badge online">running</span>
+  {{- else -}}
+    <span class="badge offline">stopped</span>
+  {{- end -}}
+{{ end }}
