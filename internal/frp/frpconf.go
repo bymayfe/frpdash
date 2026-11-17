@@ -1,7 +1,8 @@
-// Package frpconf turns structured frpdash data into frp (v0.52+) TOML.
+// This part (frpconf) turns structured frpdash data into frp (v0.52+) TOML.
 // Configs are validated first and encoded with a TOML library, so nothing a
 // user typed ever reaches frp as raw config text.
-package frpconf
+
+package frp
 
 import (
 	"errors"

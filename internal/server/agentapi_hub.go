@@ -1,6 +1,7 @@
-// Package agentapi serves the agent-facing endpoints (pairing and the
+// This part (agentapi) serves the agent-facing endpoints (pairing and the
 // desired-state WebSocket) and tracks which agents are online.
-package agentapi
+
+package server
 
 import (
 	"context"
@@ -14,10 +15,8 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
-	"github.com/bymayfe/frpdash/internal/frpconf"
-	"github.com/bymayfe/frpdash/internal/protocol"
-	"github.com/bymayfe/frpdash/internal/server/fleet"
-	"github.com/bymayfe/frpdash/internal/server/store"
+	"github.com/bymayfe/frpdash/internal/frp"
+	"github.com/bymayfe/frpdash/internal/store"
 )
 
 const (
@@ -32,7 +31,7 @@ type Fleet interface {
 	Pair(ctx context.Context, token string) (store.Client, string, error)
 	CheckPairingToken(ctx context.Context, token string) (store.Client, error)
 	AuthenticateAgent(ctx context.Context, clientID int64, secret string) (store.Client, error)
-	DesiredConfig(ctx context.Context, clientID int64) (int64, frpconf.ClientConfig, error)
+	DesiredConfig(ctx context.Context, clientID int64) (int64, frp.ClientConfig, error)
 	RecordApplied(ctx context.Context, clientID, rev int64) error
 	RecordSeen(ctx context.Context, clientID int64) error
 }
@@ -60,14 +59,14 @@ func NewHub(f Fleet, log *slog.Logger) *Hub {
 // Handler serves only the agent endpoints; everything else is 404.
 func (h *Hub) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST "+protocol.PathPair, h.servePair)
-	mux.HandleFunc("GET "+protocol.PathConnect, h.serveConnect)
-	mux.HandleFunc("GET "+protocol.PathInstall+"{token}", h.serveInstallScript)
-	mux.HandleFunc("GET "+protocol.PathInstall+"{token}/{file}", h.serveInstallBinary)
+	mux.HandleFunc("POST "+frp.PathPair, h.servePair)
+	mux.HandleFunc("GET "+frp.PathConnect, h.serveConnect)
+	mux.HandleFunc("GET "+frp.PathInstall+"{token}", h.serveInstallScript)
+	mux.HandleFunc("GET "+frp.PathInstall+"{token}/{file}", h.serveInstallBinary)
 	return mux
 }
 
-// ClientChanged implements fleet.Notifier.
+// ClientChanged implements Notifier.
 func (h *Hub) ClientChanged(clientID int64) {
 	h.mu.Lock()
 	s := h.sessions[clientID]
@@ -89,13 +88,13 @@ func (h *Hub) Online(clientID int64) bool {
 }
 
 func (h *Hub) servePair(w http.ResponseWriter, r *http.Request) {
-	var req protocol.PairRequest
+	var req frp.PairRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
 	c, secret, err := h.fleet.Pair(r.Context(), req.Token)
-	if errors.Is(err, fleet.ErrPairingFailed) {
+	if errors.Is(err, ErrPairingFailed) {
 		h.log.Warn("pairing rejected", "remote", r.RemoteAddr)
 		http.Error(w, err.Error(), http.StatusForbidden)
 		return
@@ -108,11 +107,11 @@ func (h *Hub) servePair(w http.ResponseWriter, r *http.Request) {
 	h.log.Info("client paired", "client", c.Name, "remote", r.RemoteAddr)
 	w.Header().Set("Content-Type", "application/json")
 	//nolint:gosec // issuing the secret is the point of pairing
-	_ = json.NewEncoder(w).Encode(protocol.PairResponse{ClientID: c.ID, ClientName: c.Name, Secret: secret})
+	_ = json.NewEncoder(w).Encode(frp.PairResponse{ClientID: c.ID, ClientName: c.Name, Secret: secret})
 }
 
 func (h *Hub) serveConnect(w http.ResponseWriter, r *http.Request) {
-	id, secret, err := protocol.ParseAuthHeader(r.Header.Get("Authorization"))
+	id, secret, err := frp.ParseAuthHeader(r.Header.Get("Authorization"))
 	if err == nil {
 		_, err = h.fleet.AuthenticateAgent(r.Context(), id, secret)
 	}
@@ -141,10 +140,10 @@ func (h *Hub) serveConnect(w http.ResponseWriter, r *http.Request) {
 
 func (h *Hub) run(ctx context.Context, conn *websocket.Conn, id int64, s *session, log *slog.Logger) error {
 	helloCtx, cancelHello := context.WithTimeout(ctx, helloTimeout)
-	var hello protocol.Message
+	var hello frp.Message
 	err := wsjson.Read(helloCtx, conn, &hello)
 	cancelHello()
-	if err != nil || hello.Type != protocol.TypeHello || hello.Hello == nil {
+	if err != nil || hello.Type != frp.TypeHello || hello.Hello == nil {
 		return errors.New("expected hello")
 	}
 	log.Info("agent connected", "applied_rev", hello.Hello.AppliedRev, "version", hello.Hello.Version)
@@ -160,8 +159,8 @@ func (h *Hub) run(ctx context.Context, conn *websocket.Conn, id int64, s *sessio
 		}
 		wctx, cancel := context.WithTimeout(ctx, writeTimeout)
 		defer cancel()
-		if err := wsjson.Write(wctx, conn, protocol.Message{Type: protocol.TypeDesired,
-			Desired: &protocol.Desired{Rev: rev, Config: cfg}}); err != nil {
+		if err := wsjson.Write(wctx, conn, frp.Message{Type: frp.TypeDesired,
+			Desired: &frp.Desired{Rev: rev, Config: cfg}}); err != nil {
 			return err
 		}
 		sent = rev
@@ -197,11 +196,11 @@ func (h *Hub) run(ctx context.Context, conn *websocket.Conn, id int64, s *sessio
 
 func (h *Hub) readAcks(ctx context.Context, conn *websocket.Conn, id int64, log *slog.Logger) error {
 	for {
-		var m protocol.Message
+		var m frp.Message
 		if err := wsjson.Read(ctx, conn, &m); err != nil {
 			return err
 		}
-		if m.Type != protocol.TypeAck || m.Ack == nil {
+		if m.Type != frp.TypeAck || m.Ack == nil {
 			continue
 		}
 		if m.Ack.Error != "" {

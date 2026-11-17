@@ -1,7 +1,8 @@
-// Package firewall opens the ports frpdash needs in the host firewall: ufw or
+// This part (firewall) opens the ports frpdash needs in the host firewall: ufw or
 // firewalld, or ufw installed fresh on Debian/Ubuntu. It always allows SSH
 // before enabling a firewall, so the operator cannot lock themselves out.
-package firewall
+
+package server
 
 import (
 	"bufio"
@@ -77,22 +78,22 @@ type Step struct {
 // Runner executes a command; tests replace it.
 type Runner func(ctx context.Context, name string, args ...string) ([]byte, error)
 
-// Manager detects the firewall and applies rules. It needs root.
-type Manager struct {
+// FirewallManager detects the firewall and applies rules. It needs root.
+type FirewallManager struct {
 	run      Runner
 	lookPath func(string) (string, error)
 	sshdConf string
 }
 
-// New returns a Manager that runs real commands.
-func New() *Manager {
+// NewFirewallManager returns a Manager that runs real commands.
+func NewFirewallManager() *FirewallManager {
 	// Only root, i.e. the frpdash-server service, escapes its sandbox this
 	// way. INVOCATION_ID alone is not enough: desktop sessions run user
 	// services that set it too, and a non-root systemd-run would make polkit
 	// ask the person at the desk for a password.
 	_, err := exec.LookPath("systemd-run")
 	underSystemd := os.Geteuid() == 0 && os.Getenv("INVOCATION_ID") != "" && err == nil
-	return &Manager{
+	return &FirewallManager{
 		run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			name, args = command(underSystemd, name, args)
 			cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // fixed command names, numeric arguments
@@ -124,17 +125,17 @@ func command(underSystemd bool, name string, args []string) (string, []string) {
 }
 
 // NewWith returns a Manager with a fake runner and command lookup, for tests.
-func NewWith(run Runner, lookPath func(string) (string, error), sshdConf string) *Manager {
-	return &Manager{run: run, lookPath: lookPath, sshdConf: sshdConf}
+func NewWith(run Runner, lookPath func(string) (string, error), sshdConf string) *FirewallManager {
+	return &FirewallManager{run: run, lookPath: lookPath, sshdConf: sshdConf}
 }
 
-func (m *Manager) has(name string) bool {
+func (m *FirewallManager) has(name string) bool {
 	_, err := m.lookPath(name)
 	return err == nil
 }
 
 // Detect finds the firewall in use and the SSH ports to keep open.
-func (m *Manager) Detect(ctx context.Context) Status {
+func (m *FirewallManager) Detect(ctx context.Context) Status {
 	st := Status{Kind: None, SSHPorts: m.sshPorts(ctx)}
 	switch {
 	case m.has("ufw"):
@@ -153,7 +154,7 @@ func (m *Manager) Detect(ctx context.Context) Status {
 
 // sshPorts reads the ports sshd listens on (sshd -T, then sshd_config),
 // defaulting to 22.
-func (m *Manager) sshPorts(ctx context.Context) []int {
+func (m *FirewallManager) sshPorts(ctx context.Context) []int {
 	var ports []int
 	if out, err := m.run(ctx, "sshd", "-T"); err == nil {
 		ports = parsePorts(string(out))
@@ -190,7 +191,7 @@ func parsePorts(text string) []int {
 // Apply opens rules in the detected firewall, installing and enabling ufw
 // when needed. It stops at the first failing command; the steps so far are
 // returned either way.
-func (m *Manager) Apply(ctx context.Context, st Status, rules []Rule) ([]Step, error) {
+func (m *FirewallManager) Apply(ctx context.Context, st Status, rules []Rule) ([]Step, error) {
 	if !st.Supported() {
 		return nil, fmt.Errorf("no supported firewall: open the ports in your firewall or provider panel")
 	}
@@ -224,7 +225,7 @@ func (m *Manager) Apply(ctx context.Context, st Status, rules []Rule) ([]Step, e
 
 // Remove closes rules that Apply opened earlier. It never touches the SSH
 // ports and does nothing when the firewall is not active.
-func (m *Manager) Remove(ctx context.Context, st Status, rules []Rule) ([]Step, error) {
+func (m *FirewallManager) Remove(ctx context.Context, st Status, rules []Rule) ([]Step, error) {
 	if !st.Active || len(rules) == 0 {
 		return nil, nil
 	}
@@ -250,7 +251,7 @@ func (m *Manager) Remove(ctx context.Context, st Status, rules []Rule) ([]Step, 
 	return m.runAll(ctx, cmds)
 }
 
-func (m *Manager) runAll(ctx context.Context, cmds [][]string) ([]Step, error) {
+func (m *FirewallManager) runAll(ctx context.Context, cmds [][]string) ([]Step, error) {
 	steps := make([]Step, 0, len(cmds))
 	for _, c := range cmds {
 		out, err := m.run(ctx, c[0], c[1:]...)

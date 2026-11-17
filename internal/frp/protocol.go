@@ -1,7 +1,8 @@
-// Package protocol defines what the server and agent exchange: the pairing
+// This part (protocol) defines what the server and agent exchange: the pairing
 // code, the pairing request, the WebSocket messages of the desired-state
 // loop, and TLS certificate pinning.
-package protocol
+
+package frp
 
 import (
 	"crypto/sha256"
@@ -15,8 +16,6 @@ import (
 	"net"
 	"strconv"
 	"strings"
-
-	"github.com/bymayfe/frpdash/internal/frpconf"
 )
 
 // HTTP paths served by the agent listener.
@@ -114,8 +113,8 @@ type Hello struct {
 
 // Desired is the config the agent should run.
 type Desired struct {
-	Rev    int64                `json:"rev"`
-	Config frpconf.ClientConfig `json:"config"`
+	Rev    int64        `json:"rev"`
+	Config ClientConfig `json:"config"`
 }
 
 // Ack reports the result of applying a revision; Error is empty on success.

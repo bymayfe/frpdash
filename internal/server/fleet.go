@@ -1,8 +1,9 @@
-// Package fleet holds the business rules for clients and their services:
+// This part (fleet) holds the business rules for clients and their services:
 // naming, port allocation, visitor grants, the global settings layer and the
 // desired frpc config each agent should run. Every change bumps the affected
 // clients' desired revision and notifies the agent hub.
-package fleet
+
+package server
 
 import (
 	"context"
@@ -12,9 +13,8 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/bymayfe/frpdash/internal/frpconf"
-	"github.com/bymayfe/frpdash/internal/server/ports"
-	"github.com/bymayfe/frpdash/internal/server/store"
+	"github.com/bymayfe/frpdash/internal/frp"
+	"github.com/bymayfe/frpdash/internal/store"
 )
 
 const (
@@ -32,22 +32,22 @@ func invalidf(format string, args ...any) error {
 
 // Global is the top settings layer.
 type Global struct {
-	BindPort  int               `json:"bindPort"`
-	Token     string            `json:"token"`
-	PortRange frpconf.PortRange `json:"portRange"`
-	Overrides frpconf.Overrides `json:"overrides"`
+	BindPort  int           `json:"bindPort"`
+	Token     string        `json:"token"`
+	PortRange frp.PortRange `json:"portRange"`
+	Overrides frp.Overrides `json:"overrides"`
 }
 
 // DefaultGlobal is written on first start; the token is generated.
-var DefaultGlobal = Global{BindPort: 7000, PortRange: frpconf.PortRange{Min: 20000, Max: 20999}}
+var DefaultGlobal = Global{BindPort: 7000, PortRange: frp.PortRange{Min: 20000, Max: 20999}}
 
 // Notifier is told which clients' desired state changed.
 type Notifier interface {
 	ClientChanged(clientID int64)
 }
 
-// Service manages the fleet.
-type Service struct {
+// FleetService manages the fleet.
+type FleetService struct {
 	db         *store.DB
 	publicHost string
 	reserved   []int
@@ -62,21 +62,21 @@ type HostPorts interface {
 }
 
 // SetHostPorts enables the check for ports already used on the VDS.
-func (s *Service) SetHostPorts(h HostPorts) { s.host = h }
+func (s *FleetService) SetHostPorts(h HostPorts) { s.host = h }
 
-// NewService builds a Service. publicHost is the VDS address agents and frpc
+// NewFleetService builds a Service. publicHost is the VDS address agents and frpc
 // dial; reserved ports are never handed to proxies.
-func NewService(db *store.DB, publicHost string, reserved ...int) *Service {
-	return &Service{db: db, publicHost: publicHost, reserved: reserved}
+func NewFleetService(db *store.DB, publicHost string, reserved ...int) *FleetService {
+	return &FleetService{db: db, publicHost: publicHost, reserved: reserved}
 }
 
 // SetNotifier registers the change listener (the agent hub).
-func (s *Service) SetNotifier(n Notifier) { s.notifier = n }
+func (s *FleetService) SetNotifier(n Notifier) { s.notifier = n }
 
 // PublicHost returns the VDS address.
-func (s *Service) PublicHost() string { return s.publicHost }
+func (s *FleetService) PublicHost() string { return s.publicHost }
 
-func (s *Service) notify(ids ...int64) {
+func (s *FleetService) notify(ids ...int64) {
 	if s.notifier == nil {
 		return
 	}
@@ -86,7 +86,7 @@ func (s *Service) notify(ids ...int64) {
 }
 
 // Global returns the global layer, creating it with a fresh token on first use.
-func (s *Service) Global(ctx context.Context) (Global, error) {
+func (s *FleetService) Global(ctx context.Context) (Global, error) {
 	var g Global
 	err := s.db.Repos().Settings.Get(ctx, settingsKeyGlobal, &g)
 	if !errors.Is(err, store.ErrNotFound) {
@@ -100,43 +100,43 @@ func (s *Service) Global(ctx context.Context) (Global, error) {
 }
 
 // ServerConfig builds the frps config from the global layer.
-func (s *Service) ServerConfig(ctx context.Context) (frpconf.ServerConfig, error) {
+func (s *FleetService) ServerConfig(ctx context.Context) (frp.ServerConfig, error) {
 	g, err := s.Global(ctx)
 	if err != nil {
-		return frpconf.ServerConfig{}, err
+		return frp.ServerConfig{}, err
 	}
-	return frpconf.ServerConfig{
+	return frp.ServerConfig{
 		BindAddr: "0.0.0.0", BindPort: g.BindPort, Token: g.Token,
-		AllowPorts: []frpconf.PortRange{g.PortRange},
+		AllowPorts: []frp.PortRange{g.PortRange},
 	}, nil
 }
 
-func (s *Service) allocator(g Global) *ports.Allocator {
-	return ports.NewAllocator(g.PortRange, append([]int{g.BindPort}, s.reserved...)...)
+func (s *FleetService) allocator(g Global) *Allocator {
+	return NewAllocator(g.PortRange, append([]int{g.BindPort}, s.reserved...)...)
 }
 
 func validateName(kind, name string) error {
-	if len(name) > maxNameLen || frpconf.ValidateName(kind, name) != nil {
+	if len(name) > maxNameLen || frp.ValidateName(kind, name) != nil {
 		return invalidf("%s name must be 1-%d characters: a-z, 0-9, '-' or '_'", kind, maxNameLen)
 	}
 	return nil
 }
 
-func clientRange(c store.Client) *frpconf.PortRange {
+func clientRange(c store.Client) *frp.PortRange {
 	if c.PortMin == 0 {
 		return nil
 	}
-	return &frpconf.PortRange{Min: c.PortMin, Max: c.PortMax}
+	return &frp.PortRange{Min: c.PortMin, Max: c.PortMax}
 }
 
 // ClientInput describes a new client.
 type ClientInput struct {
 	Name      string
-	PortRange *frpconf.PortRange // optional, narrows the global range
+	PortRange *frp.PortRange // optional, narrows the global range
 }
 
 // CreateClient adds a client (unpaired until its agent connects).
-func (s *Service) CreateClient(ctx context.Context, in ClientInput) (store.Client, error) {
+func (s *FleetService) CreateClient(ctx context.Context, in ClientInput) (store.Client, error) {
 	if err := validateName("client", in.Name); err != nil {
 		return store.Client{}, err
 	}
@@ -155,18 +155,18 @@ func (s *Service) CreateClient(ctx context.Context, in ClientInput) (store.Clien
 }
 
 // Client returns one client.
-func (s *Service) Client(ctx context.Context, id int64) (store.Client, error) {
+func (s *FleetService) Client(ctx context.Context, id int64) (store.Client, error) {
 	return s.db.Repos().Clients.Get(ctx, id)
 }
 
 // Clients returns all clients.
-func (s *Service) Clients(ctx context.Context) ([]store.Client, error) {
+func (s *FleetService) Clients(ctx context.Context) ([]store.Client, error) {
 	return s.db.Repos().Clients.List(ctx)
 }
 
 // DeleteClient removes a client with its services; clients that visited
 // those services, and owners of services it visited, get a new desired state.
-func (s *Service) DeleteClient(ctx context.Context, id int64) error {
+func (s *FleetService) DeleteClient(ctx context.Context, id int64) error {
 	var changed []int64
 	err := s.db.InTx(ctx, func(r *store.Repos) error {
 		proxies, err := r.Proxies.ListByClient(ctx, id)
@@ -226,7 +226,7 @@ type ProxyInput struct {
 
 // AddProxy validates and stores a service, allocating a remote port for
 // public ones, and bumps the client's desired revision.
-func (s *Service) AddProxy(ctx context.Context, clientID int64, in ProxyInput) (store.Proxy, error) {
+func (s *FleetService) AddProxy(ctx context.Context, clientID int64, in ProxyInput) (store.Proxy, error) {
 	if err := validateName("service", in.Name); err != nil {
 		return store.Proxy{}, err
 	}
@@ -295,7 +295,7 @@ func (s *Service) AddProxy(ctx context.Context, clientID int64, in ProxyInput) (
 	case errors.Is(err, store.ErrNameTaken):
 		return p, invalidf("this client already has a service named %q", in.Name)
 	case errors.Is(err, store.ErrPortTaken):
-		return p, invalidf("%v", ports.ErrInUse)
+		return p, invalidf("%v", ErrInUse)
 	case err != nil:
 		return p, err
 	}
@@ -304,17 +304,17 @@ func (s *Service) AddProxy(ctx context.Context, clientID int64, in ProxyInput) (
 }
 
 // Proxy returns one service.
-func (s *Service) Proxy(ctx context.Context, id int64) (store.Proxy, error) {
+func (s *FleetService) Proxy(ctx context.Context, id int64) (store.Proxy, error) {
 	return s.db.Repos().Proxies.Get(ctx, id)
 }
 
 // Proxies returns a client's services.
-func (s *Service) Proxies(ctx context.Context, clientID int64) ([]store.Proxy, error) {
+func (s *FleetService) Proxies(ctx context.Context, clientID int64) ([]store.Proxy, error) {
 	return s.db.Repos().Proxies.ListByClient(ctx, clientID)
 }
 
 // RemoveProxy deletes a service and updates its owner and visitors.
-func (s *Service) RemoveProxy(ctx context.Context, proxyID int64) error {
+func (s *FleetService) RemoveProxy(ctx context.Context, proxyID int64) error {
 	var changed []int64
 	err := s.db.InTx(ctx, func(r *store.Repos) error {
 		p, err := r.Proxies.Get(ctx, proxyID)
@@ -341,13 +341,13 @@ func (s *Service) RemoveProxy(ctx context.Context, proxyID int64) error {
 }
 
 // VisitorsOfProxy lists who may reach a private service.
-func (s *Service) VisitorsOfProxy(ctx context.Context, proxyID int64) ([]store.VisitorView, error) {
+func (s *FleetService) VisitorsOfProxy(ctx context.Context, proxyID int64) ([]store.VisitorView, error) {
 	return s.db.Repos().Proxies.VisitorsOfProxy(ctx, proxyID)
 }
 
 // GrantVisitor lets visitorClientID reach a private service on bindPort
 // (127.0.0.1 on the visiting machine).
-func (s *Service) GrantVisitor(ctx context.Context, proxyID, visitorClientID int64, bindPort int) error {
+func (s *FleetService) GrantVisitor(ctx context.Context, proxyID, visitorClientID int64, bindPort int) error {
 	if bindPort < 1 || bindPort > 65535 {
 		return invalidf("local port must be 1-65535")
 	}
@@ -383,7 +383,7 @@ func (s *Service) GrantVisitor(ctx context.Context, proxyID, visitorClientID int
 }
 
 // RevokeVisitor removes a grant.
-func (s *Service) RevokeVisitor(ctx context.Context, proxyID, visitorClientID int64) error {
+func (s *FleetService) RevokeVisitor(ctx context.Context, proxyID, visitorClientID int64) error {
 	var owner int64
 	err := s.db.InTx(ctx, func(r *store.Repos) error {
 		p, err := r.Proxies.Get(ctx, proxyID)
@@ -403,30 +403,30 @@ func (s *Service) RevokeVisitor(ctx context.Context, proxyID, visitorClientID in
 }
 
 // DesiredConfig returns the revision and frpc config a client should run.
-func (s *Service) DesiredConfig(ctx context.Context, clientID int64) (int64, frpconf.ClientConfig, error) {
+func (s *FleetService) DesiredConfig(ctx context.Context, clientID int64) (int64, frp.ClientConfig, error) {
 	g, err := s.Global(ctx)
 	if err != nil {
-		return 0, frpconf.ClientConfig{}, err
+		return 0, frp.ClientConfig{}, err
 	}
 	var (
 		rev int64
-		cfg frpconf.ClientConfig
+		cfg frp.ClientConfig
 	)
 	err = s.db.InTx(ctx, func(r *store.Repos) error {
 		c, err := r.Clients.Get(ctx, clientID)
 		if err != nil {
 			return err
 		}
-		clientLayer, err := frpconf.ParseOverrides(c.Overrides)
+		clientLayer, err := frp.ParseOverrides(c.Overrides)
 		if err != nil {
 			return err
 		}
-		opts := frpconf.Resolve(g.Overrides, clientLayer)
+		opts := frp.Resolve(g.Overrides, clientLayer)
 		rev = c.DesiredRev
-		cfg = frpconf.ClientConfig{
+		cfg = frp.ClientConfig{
 			ServerAddr: s.publicHost, ServerPort: g.BindPort, Token: g.Token,
 			User: c.Name, Protocol: opts.Protocol,
-			Proxies: []frpconf.Proxy{}, Visitors: []frpconf.Visitor{},
+			Proxies: []frp.Proxy{}, Visitors: []frp.Visitor{},
 		}
 
 		proxies, err := r.Proxies.ListByClient(ctx, clientID)
@@ -437,12 +437,12 @@ func (s *Service) DesiredConfig(ctx context.Context, clientID int64) (int64, frp
 			if !p.Enabled {
 				continue
 			}
-			proxyLayer, err := frpconf.ParseOverrides(p.Overrides)
+			proxyLayer, err := frp.ParseOverrides(p.Overrides)
 			if err != nil {
 				return err
 			}
-			po := frpconf.Resolve(g.Overrides, clientLayer, proxyLayer)
-			fp := frpconf.Proxy{
+			po := frp.Resolve(g.Overrides, clientLayer, proxyLayer)
+			fp := frp.Proxy{
 				Name: p.Name, Type: p.Type, LocalIP: p.LocalIP, LocalPort: p.LocalPort,
 				RemotePort: p.RemotePort, SecretKey: p.SecretKey,
 				UseEncryption: po.UseEncryption, UseCompression: po.UseCompression,
@@ -465,7 +465,7 @@ func (s *Service) DesiredConfig(ctx context.Context, clientID int64) (int64, frp
 			return err
 		}
 		for _, v := range visitors {
-			cfg.Visitors = append(cfg.Visitors, frpconf.Visitor{
+			cfg.Visitors = append(cfg.Visitors, frp.Visitor{
 				Name: v.OwnerName + "-" + v.ProxyName, ServerUser: v.OwnerName, ServerName: v.ProxyName,
 				SecretKey: v.SecretKey, BindAddr: defaultLocalIP, BindPort: v.BindPort,
 				UseEncryption: opts.UseEncryption, UseCompression: opts.UseCompression,

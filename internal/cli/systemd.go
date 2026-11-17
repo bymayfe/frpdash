@@ -1,5 +1,6 @@
-// Package systemd installs frpdash as a systemd service.
-package systemd
+// This part (systemd) installs frpdash as a systemd service.
+
+package cli
 
 import (
 	"context"

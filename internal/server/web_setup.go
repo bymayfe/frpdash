@@ -1,4 +1,4 @@
-package web
+package server
 
 import (
 	"context"
@@ -10,22 +10,21 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/bymayfe/frpdash/internal/server/setup"
-	"github.com/bymayfe/frpdash/internal/server/store"
+	"github.com/bymayfe/frpdash/internal/store"
 	assets "github.com/bymayfe/frpdash/web"
 )
 
-// SetupService is what the setup page needs from setup.Service.
-type SetupService interface {
+// SetupCompleter is what the setup page needs from SetupService.
+type SetupCompleter interface {
 	HasAdmin(ctx context.Context) (bool, error)
-	Complete(ctx context.Context, in setup.Input) error
+	Complete(ctx context.Context, in Input) error
 }
 
 // Setup serves the first-run page until setup is complete, then a short
 // "starting" notice until the server swaps in the panel.
 type Setup struct {
-	svc       SetupService
-	addresses []setup.Address
+	svc       SetupCompleter
+	addresses []Address
 	firewall  Firewall // nil: no firewall step
 	done      func()
 	log       *slog.Logger
@@ -35,7 +34,7 @@ type Setup struct {
 
 // NewSetup builds the setup page. done is called once, after a successful
 // submit has been answered.
-func NewSetup(svc SetupService, addresses []setup.Address, fw Firewall, done func(), log *slog.Logger) (*Setup, error) {
+func NewSetup(svc SetupCompleter, addresses []Address, fw Firewall, done func(), log *slog.Logger) (*Setup, error) {
 	page, err := parsePage("setup")
 	if err != nil {
 		return nil, err
@@ -50,7 +49,7 @@ type setupData struct {
 	Error     string
 	Flash     string
 	HasAdmin  bool
-	Addresses []setup.Address
+	Addresses []Address
 	Username  string
 	Host      string
 	Finished  bool
@@ -93,7 +92,7 @@ func (s *Setup) submit(w http.ResponseWriter, r *http.Request) {
 		s.starting(w)
 		return
 	}
-	in := setup.Input{
+	in := Input{
 		Code:       r.FormValue("code"),
 		Username:   r.FormValue("username"),
 		Password:   r.FormValue("password"),
@@ -101,14 +100,14 @@ func (s *Setup) submit(w http.ResponseWriter, r *http.Request) {
 		PublicHost: r.FormValue("public_host"),
 	}
 	err := s.svc.Complete(r.Context(), in)
-	if errors.Is(err, setup.ErrInvalid) {
+	if errors.Is(err, ErrSetupInvalid) {
 		s.log.Warn("setup rejected", "err", err)
 		d, derr := s.data(r.Context())
 		if derr != nil {
 			s.internal(w, derr)
 			return
 		}
-		d.Error = strings.TrimPrefix(err.Error(), setup.ErrInvalid.Error()+": ")
+		d.Error = strings.TrimPrefix(err.Error(), ErrSetupInvalid.Error()+": ")
 		d.Username, d.Host = in.Username, in.PublicHost
 		d.OpenPorts = r.FormValue("open_ports") != ""
 		s.render(w, http.StatusUnprocessableEntity, d)

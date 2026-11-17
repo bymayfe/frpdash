@@ -1,27 +1,25 @@
-package web
+package server
 
 import (
 	"context"
 	"net/http"
-
-	"github.com/bymayfe/frpdash/internal/firewall"
 )
 
-// Firewall is what the panel needs from fwsync.Service.
+// Firewall is what the panel needs from FirewallSync.
 type Firewall interface {
-	Detect(ctx context.Context) firewall.Status
-	Rules(ctx context.Context) ([]firewall.Rule, error)
+	Detect(ctx context.Context) Status
+	Rules(ctx context.Context) ([]Rule, error)
 	Managed(ctx context.Context) (bool, error)
-	Sync(ctx context.Context) ([]firewall.Step, error)
+	Sync(ctx context.Context) ([]Step, error)
 }
 
 // firewallView is what the templates show about the firewall.
 type firewallView struct {
-	Status  firewall.Status
-	Rules   []firewall.Rule
-	Managed bool            // frpdash opens and closes service ports automatically
-	Steps   []firewall.Step // after Sync
-	Err     string          // Sync's error, if any
+	Status  Status
+	Rules   []Rule
+	Managed bool   // frpdash opens and closes service ports automatically
+	Steps   []Step // after Sync
+	Err     string // Sync's error, if any
 }
 
 // firewallStatus detects the firewall and lists the required rules; nil

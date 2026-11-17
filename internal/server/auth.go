@@ -1,6 +1,7 @@
-// Package auth owns panel accounts: username/password policy, password
+// This part (auth) owns panel accounts: username/password policy, password
 // hashing and credential checks. Persistence is behind the UserStore interface.
-package auth
+
+package server
 
 import (
 	"context"
@@ -12,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bymayfe/frpdash/internal/server/store"
+	"github.com/bymayfe/frpdash/internal/store"
 )
 
 // Password policy. bcrypt reads only the first 72 bytes, so longer passwords
@@ -51,8 +52,8 @@ type SessionStore interface {
 // SessionTTL is how long a panel login lasts.
 const SessionTTL = 12 * time.Hour
 
-// Service manages panel accounts.
-type Service struct {
+// AuthService manages panel accounts.
+type AuthService struct {
 	users    UserStore
 	sessions SessionStore
 	hasher   PasswordHasher
@@ -61,13 +62,13 @@ type Service struct {
 	dummy string
 }
 
-// NewService builds a Service.
-func NewService(users UserStore, sessions SessionStore, hasher PasswordHasher) (*Service, error) {
+// NewAuthService builds a Service.
+func NewAuthService(users UserStore, sessions SessionStore, hasher PasswordHasher) (*AuthService, error) {
 	dummy, err := hasher.Hash("frpdash-timing-equalizer")
 	if err != nil {
 		return nil, err
 	}
-	return &Service{users: users, sessions: sessions, hasher: hasher, dummy: dummy}, nil
+	return &AuthService{users: users, sessions: sessions, hasher: hasher, dummy: dummy}, nil
 }
 
 // NormalizeUsername lowercases and trims a username.
@@ -96,13 +97,13 @@ func ValidatePassword(p string) error {
 }
 
 // HasUsers reports whether any account exists.
-func (s *Service) HasUsers(ctx context.Context) (bool, error) {
+func (s *AuthService) HasUsers(ctx context.Context) (bool, error) {
 	n, err := s.users.Count(ctx)
 	return n > 0, err
 }
 
 // CreateUser validates and stores a new account.
-func (s *Service) CreateUser(ctx context.Context, username, password string) (store.User, error) {
+func (s *AuthService) CreateUser(ctx context.Context, username, password string) (store.User, error) {
 	username = NormalizeUsername(username)
 	if err := ValidateUsername(username); err != nil {
 		return store.User{}, err
@@ -116,7 +117,7 @@ func (s *Service) CreateUser(ctx context.Context, username, password string) (st
 
 // Authenticate checks credentials. Unknown user and wrong password both
 // return ErrInvalidCredentials.
-func (s *Service) Authenticate(ctx context.Context, username, password string) (store.User, error) {
+func (s *AuthService) Authenticate(ctx context.Context, username, password string) (store.User, error) {
 	u, err := s.users.FindByUsername(ctx, NormalizeUsername(username))
 	if errors.Is(err, store.ErrNotFound) {
 		_ = s.hasher.Compare(s.dummy, password)
@@ -132,7 +133,7 @@ func (s *Service) Authenticate(ctx context.Context, username, password string) (
 }
 
 // SetPassword replaces an account's password.
-func (s *Service) SetPassword(ctx context.Context, username, password string) error {
+func (s *AuthService) SetPassword(ctx context.Context, username, password string) error {
 	hash, err := s.hash(password)
 	if err != nil {
 		return err
@@ -144,7 +145,7 @@ func (s *Service) SetPassword(ctx context.Context, username, password string) er
 	return err
 }
 
-func (s *Service) hash(password string) (string, error) {
+func (s *AuthService) hash(password string) (string, error) {
 	if err := ValidatePassword(password); err != nil {
 		return "", err
 	}
@@ -152,7 +153,7 @@ func (s *Service) hash(password string) (string, error) {
 }
 
 // StartSession creates a login session and returns its token.
-func (s *Service) StartSession(ctx context.Context, userID int64) (string, time.Time, error) {
+func (s *AuthService) StartSession(ctx context.Context, userID int64) (string, time.Time, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", time.Time{}, err
@@ -163,7 +164,7 @@ func (s *Service) StartSession(ctx context.Context, userID int64) (string, time.
 }
 
 // SessionUser returns the user of a live session token.
-func (s *Service) SessionUser(ctx context.Context, token string) (store.User, error) {
+func (s *AuthService) SessionUser(ctx context.Context, token string) (store.User, error) {
 	if token == "" {
 		return store.User{}, ErrNoSession
 	}
@@ -182,7 +183,7 @@ func (s *Service) SessionUser(ctx context.Context, token string) (store.User, er
 }
 
 // EndSession logs a session out.
-func (s *Service) EndSession(ctx context.Context, token string) error {
+func (s *AuthService) EndSession(ctx context.Context, token string) error {
 	return s.sessions.Delete(ctx, hashToken(token))
 }
 

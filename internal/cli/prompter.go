@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/bymayfe/frpdash/internal/server/auth"
+	"github.com/bymayfe/frpdash/internal/server"
 )
 
 const passwordAttempts = 3
@@ -21,11 +21,11 @@ func (p *Prompter) NewPassword() (string, error) {
 		return "", errors.New("a terminal is required to enter a password")
 	}
 	for i := 0; i < passwordAttempts; i++ {
-		pw, err := p.secret(fmt.Sprintf("Password (min %d characters): ", auth.MinPasswordLen))
+		pw, err := p.secret(fmt.Sprintf("Password (min %d characters): ", server.MinPasswordLen))
 		if err != nil {
 			return "", err
 		}
-		if err := auth.ValidatePassword(pw); err != nil {
+		if err := server.ValidatePassword(pw); err != nil {
 			fmt.Fprintln(p.io.Stdout, err)
 			continue
 		}

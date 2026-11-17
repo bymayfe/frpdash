@@ -1,4 +1,4 @@
-package agentapi
+package server
 
 import (
 	"bytes"
@@ -8,8 +8,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/bymayfe/frpdash/internal/protocol"
-	"github.com/bymayfe/frpdash/internal/server/fleet"
+	"github.com/bymayfe/frpdash/internal/frp"
 )
 
 // InstallConfig enables the one-line client installer: a shell script and the
@@ -37,9 +36,9 @@ func (h *Hub) serveInstallScript(w http.ResponseWriter, r *http.Request) {
 	cfg := h.install
 	var buf bytes.Buffer
 	err := installScript.Execute(&buf, map[string]string{
-		"Base": "https://" + cfg.Addr + protocol.PathInstall + token,
+		"Base": "https://" + cfg.Addr + frp.PathInstall + token,
 		"Pin":  cfg.PublicKeyPin,
-		"Code": protocol.PairingCode{Addr: cfg.Addr, Fingerprint: cfg.Fingerprint, Token: token}.Encode(),
+		"Code": frp.PairingCode{Addr: cfg.Addr, Fingerprint: cfg.Fingerprint, Token: token}.Encode(),
 	})
 	if err != nil {
 		h.log.Error("install script", "err", err)
@@ -98,7 +97,7 @@ func (h *Hub) installToken(w http.ResponseWriter, r *http.Request) (string, bool
 		return "", false
 	}
 	_, err := h.fleet.CheckPairingToken(r.Context(), token)
-	if errors.Is(err, fleet.ErrPairingFailed) {
+	if errors.Is(err, ErrPairingFailed) {
 		h.log.Warn("install rejected", "remote", r.RemoteAddr)
 		http.Error(w, "pairing code is invalid, expired or already used; create a new one in the panel", http.StatusForbidden)
 		return "", false

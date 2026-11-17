@@ -5,9 +5,9 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 LDFLAGS := -s -w \
-	-X $(PKG)/internal/version.Version=$(VERSION) \
-	-X $(PKG)/internal/version.Commit=$(COMMIT) \
-	-X $(PKG)/internal/version.Date=$(DATE)
+	-X $(PKG)/internal/cli.Version=$(VERSION) \
+	-X $(PKG)/internal/cli.Commit=$(COMMIT) \
+	-X $(PKG)/internal/cli.Date=$(DATE)
 
 export CGO_ENABLED := 0
 

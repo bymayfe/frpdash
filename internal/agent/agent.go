@@ -17,9 +17,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
-	"github.com/bymayfe/frpdash/internal/frpbin"
-	"github.com/bymayfe/frpdash/internal/protocol"
-	"github.com/bymayfe/frpdash/internal/version"
+	"github.com/bymayfe/frpdash/internal/frp"
 )
 
 const (
@@ -56,24 +54,24 @@ func (c Credentials) Save(path string) error {
 	if err != nil {
 		return err
 	}
-	return frpbin.WriteFileAtomic(path, b, 0o600)
+	return frp.WriteFileAtomic(path, b, 0o600)
 }
 
 func httpClient(fingerprint string) *http.Client {
 	return &http.Client{
 		Timeout:   dialTimeout,
-		Transport: &http.Transport{TLSClientConfig: protocol.PinnedTLSConfig(fingerprint)},
+		Transport: &http.Transport{TLSClientConfig: frp.PinnedTLSConfig(fingerprint)},
 	}
 }
 
 // Pair redeems a pairing code and returns the agent's credentials.
 func Pair(ctx context.Context, code string) (Credentials, error) {
-	pc, err := protocol.DecodePairingCode(code)
+	pc, err := frp.DecodePairingCode(code)
 	if err != nil {
 		return Credentials{}, err
 	}
-	body, _ := json.Marshal(protocol.PairRequest{Token: pc.Token})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+pc.Addr+protocol.PathPair, bytes.NewReader(body))
+	body, _ := json.Marshal(frp.PairRequest{Token: pc.Token})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+pc.Addr+frp.PathPair, bytes.NewReader(body))
 	if err != nil {
 		return Credentials{}, err
 	}
@@ -86,7 +84,7 @@ func Pair(ctx context.Context, code string) (Credentials, error) {
 	if resp.StatusCode != http.StatusOK {
 		return Credentials{}, fmt.Errorf("server refused pairing: %s", resp.Status)
 	}
-	var pr protocol.PairResponse
+	var pr frp.PairResponse
 	if err := json.NewDecoder(resp.Body).Decode(&pr); err != nil {
 		return Credentials{}, err
 	}
@@ -98,18 +96,20 @@ func Pair(ctx context.Context, code string) (Credentials, error) {
 type Agent struct {
 	creds     Credentials
 	dataDir   string
-	installer *frpbin.Installer
+	version   string // reported to the server in Hello
+	installer *frp.Installer
 	log       *slog.Logger
 
 	frpcBin string
-	frpc    *frpbin.Process
+	frpc    *frp.Process
 	started bool
 	applied int64
 }
 
 // New builds an Agent storing its frpc binary and config under dataDir.
-func New(creds Credentials, dataDir string, log *slog.Logger) *Agent {
-	return &Agent{creds: creds, dataDir: dataDir, installer: frpbin.NewInstaller(filepath.Join(dataDir, "bin")),
+// version is the frpdash build it reports to the server.
+func New(creds Credentials, dataDir, version string, log *slog.Logger) *Agent {
+	return &Agent{creds: creds, dataDir: dataDir, version: version, installer: frp.NewInstaller(filepath.Join(dataDir, "bin")),
 		log: log.With("component", "agent", "client", creds.ClientName)}
 }
 
@@ -126,7 +126,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	if a.frpcBin, err = a.ensureFRPC(ctx); err != nil {
 		return err
 	}
-	a.frpc = frpbin.NewProcess("frpc", a.frpcBin, a.log, "-c", a.configPath())
+	a.frpc = frp.NewProcess("frpc", a.frpcBin, a.log, "-c", a.configPath())
 
 	// Restart frpc with the last applied state, so tunnels survive while the
 	// server is unreachable.
@@ -187,9 +187,9 @@ func (a *Agent) startFRPC(ctx context.Context) {
 func (a *Agent) session(ctx context.Context) error {
 	dctx, cancel := context.WithTimeout(ctx, dialTimeout)
 	//nolint:bodyclose // coder/websocket closes the handshake response body
-	conn, _, err := websocket.Dial(dctx, "wss://"+a.creds.Server+protocol.PathConnect, &websocket.DialOptions{
+	conn, _, err := websocket.Dial(dctx, "wss://"+a.creds.Server+frp.PathConnect, &websocket.DialOptions{
 		HTTPClient: httpClient(a.creds.Fingerprint),
-		HTTPHeader: http.Header{"Authorization": {protocol.AuthHeader(a.creds.ClientID, a.creds.Secret)}},
+		HTTPHeader: http.Header{"Authorization": {frp.AuthHeader(a.creds.ClientID, a.creds.Secret)}},
 	})
 	cancel()
 	if err != nil {
@@ -198,21 +198,21 @@ func (a *Agent) session(ctx context.Context) error {
 	defer conn.CloseNow() //nolint:errcheck // best effort
 	conn.SetReadLimit(maxMessage)
 
-	if err := wsjson.Write(ctx, conn, protocol.Message{Type: protocol.TypeHello,
-		Hello: &protocol.Hello{AppliedRev: a.applied, Version: version.Version}}); err != nil {
+	if err := wsjson.Write(ctx, conn, frp.Message{Type: frp.TypeHello,
+		Hello: &frp.Hello{AppliedRev: a.applied, Version: a.version}}); err != nil {
 		return err
 	}
 	a.log.Info("connected to server", "applied_rev", a.applied)
 
 	for {
-		var m protocol.Message
+		var m frp.Message
 		if err := wsjson.Read(ctx, conn, &m); err != nil {
 			return err
 		}
-		if m.Type != protocol.TypeDesired || m.Desired == nil {
+		if m.Type != frp.TypeDesired || m.Desired == nil {
 			continue
 		}
-		ack := protocol.Ack{Rev: m.Desired.Rev}
+		ack := frp.Ack{Rev: m.Desired.Rev}
 		if err := a.apply(ctx, *m.Desired); err != nil {
 			a.log.Error("apply desired state", "rev", m.Desired.Rev, "err", err)
 			ack.Error = err.Error()
@@ -220,7 +220,7 @@ func (a *Agent) session(ctx context.Context) error {
 			a.log.Info("applied desired state", "rev", m.Desired.Rev,
 				"proxies", len(m.Desired.Config.Proxies), "visitors", len(m.Desired.Config.Visitors))
 		}
-		if err := wsjson.Write(ctx, conn, protocol.Message{Type: protocol.TypeAck, Ack: &ack}); err != nil {
+		if err := wsjson.Write(ctx, conn, frp.Message{Type: frp.TypeAck, Ack: &ack}); err != nil {
 			return err
 		}
 	}
@@ -228,16 +228,16 @@ func (a *Agent) session(ctx context.Context) error {
 
 // apply renders, verifies and installs a desired state, then (re)starts frpc.
 // A config frpc rejects is never installed.
-func (a *Agent) apply(ctx context.Context, d protocol.Desired) error {
+func (a *Agent) apply(ctx context.Context, d frp.Desired) error {
 	body, err := d.Config.TOML()
 	if err != nil {
 		return err
 	}
 	candidate := a.configPath() + ".new"
-	if err := frpbin.WriteFileAtomic(candidate, body, 0o600); err != nil {
+	if err := frp.WriteFileAtomic(candidate, body, 0o600); err != nil {
 		return err
 	}
-	if err := frpbin.Verify(ctx, a.frpcBin, candidate); err != nil {
+	if err := frp.Verify(ctx, a.frpcBin, candidate); err != nil {
 		_ = os.Remove(candidate)
 		return err
 	}
@@ -252,8 +252,8 @@ func (a *Agent) apply(ctx context.Context, d protocol.Desired) error {
 	return nil
 }
 
-func (a *Agent) loadState() (protocol.Desired, error) {
-	var st protocol.Desired
+func (a *Agent) loadState() (frp.Desired, error) {
+	var st frp.Desired
 	b, err := os.ReadFile(a.statePath())
 	if err != nil {
 		return st, err
@@ -267,10 +267,10 @@ func (a *Agent) loadState() (protocol.Desired, error) {
 	return st, nil
 }
 
-func (a *Agent) saveState(st protocol.Desired) error {
+func (a *Agent) saveState(st frp.Desired) error {
 	b, err := json.Marshal(st)
 	if err != nil {
 		return err
 	}
-	return frpbin.WriteFileAtomic(a.statePath(), b, 0o600)
+	return frp.WriteFileAtomic(a.statePath(), b, 0o600)
 }

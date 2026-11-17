@@ -11,7 +11,7 @@ import (
 // services are checked against the database instead.
 type hostPorts struct{}
 
-// InUse implements fleet.HostPorts.
+// InUse implements HostPorts.
 func (hostPorts) InUse(proto string, port int) bool {
 	addr := ":" + strconv.Itoa(port)
 	if proto == "udp" {

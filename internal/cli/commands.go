@@ -9,11 +9,7 @@ import (
 
 	"github.com/bymayfe/frpdash/internal/agent"
 	"github.com/bymayfe/frpdash/internal/server"
-	"github.com/bymayfe/frpdash/internal/server/auth"
-	"github.com/bymayfe/frpdash/internal/server/setup"
-	"github.com/bymayfe/frpdash/internal/server/store"
-	"github.com/bymayfe/frpdash/internal/systemd"
-	"github.com/bymayfe/frpdash/internal/version"
+	"github.com/bymayfe/frpdash/internal/store"
 )
 
 const (
@@ -28,12 +24,12 @@ const (
 
 // openAuth opens the database under dataDir and builds the account service.
 // The caller closes the returned DB.
-func openAuth(ctx context.Context, dataDir string) (*store.DB, *auth.Service, error) {
+func openAuth(ctx context.Context, dataDir string) (*store.DB, *server.AuthService, error) {
 	db, err := store.Open(ctx, filepath.Join(dataDir, dbFileName))
 	if err != nil {
 		return nil, nil, err
 	}
-	svc, err := auth.NewService(db.Users(), db.Repos().Sessions, auth.BcryptHasher{Cost: auth.DefaultBcryptCost})
+	svc, err := server.NewAuthService(db.Users(), db.Repos().Sessions, server.BcryptHasher{Cost: server.DefaultBcryptCost})
 	if err != nil {
 		_ = db.Close()
 		return nil, nil, err
@@ -45,7 +41,7 @@ func openAuth(ctx context.Context, dataDir string) (*store.DB, *auth.Service, er
 type ServerCommand struct {
 	io IO
 	// serve runs the server; tests replace it.
-	serve func(ctx context.Context, cfg server.Config, db *store.DB, accounts *auth.Service, log *slog.Logger) error
+	serve func(ctx context.Context, cfg server.Config, db *store.DB, accounts *server.AuthService, log *slog.Logger) error
 }
 
 // Name implements Command.
@@ -90,14 +86,14 @@ func (c *ServerCommand) Run(ctx context.Context, args []string) error {
 		return err
 	}
 	if install {
-		return c.install(ctx, cfg, setup.NewService(db, accounts, cfg.DataDir))
+		return c.install(ctx, cfg, server.NewSetupService(db, accounts, cfg.DataDir))
 	}
 	return c.serve(ctx, cfg, db, accounts, newLogger(c.io))
 }
 
 // install sets up the systemd service. The public host goes to the database,
 // not the unit, so a later change in the panel is not overridden on restart.
-func (c *ServerCommand) install(ctx context.Context, cfg server.Config, st *setup.Service) error {
+func (c *ServerCommand) install(ctx context.Context, cfg server.Config, st *server.SetupService) error {
 	if cfg.PublicHost != "" {
 		if err := st.SetPublicHost(ctx, cfg.PublicHost); err != nil {
 			return err
@@ -115,7 +111,7 @@ func (c *ServerCommand) install(ctx context.Context, cfg server.Config, st *setu
 			return err
 		}
 	}
-	unit := systemd.Unit{Name: "frpdash-server", Description: "frpdash panel and frps",
+	unit := Unit{Name: "frpdash-server", Description: "frpdash panel and frps",
 		Args: []string{"server", "--data-dir", cfg.DataDir, "--ui-addr", cfg.UIAddr, "--agent-addr", cfg.AgentAddr}}
 	if err := unit.Install(ctx); err != nil {
 		return err
@@ -134,14 +130,14 @@ func (c *ServerCommand) install(ctx context.Context, cfg server.Config, st *setu
 	fmt.Fprintln(c.io.Stdout)
 	fmt.Fprintln(c.io.Stdout, "Finish setup in the browser with this one-time code:")
 	fmt.Fprintf(c.io.Stdout, "  %s\n", code)
-	fmt.Fprintf(c.io.Stdout, "(also in %s and in: journalctl -u frpdash-server)\n", filepath.Join(cfg.DataDir, setup.CodeFile))
+	fmt.Fprintf(c.io.Stdout, "(also in %s and in: journalctl -u frpdash-server)\n", filepath.Join(cfg.DataDir, server.CodeFile))
 	return nil
 }
 
 // adminFromEnv creates the first account from FRPDASH_ADMIN_USER /
 // FRPDASH_ADMIN_PASSWORD, for unattended installs. Otherwise the setup page
 // in the browser asks for it.
-func (c *ServerCommand) adminFromEnv(ctx context.Context, accounts *auth.Service) error {
+func (c *ServerCommand) adminFromEnv(ctx context.Context, accounts *server.AuthService) error {
 	pw := c.io.Getenv(envAdminPassword)
 	if pw == "" {
 		return nil
@@ -162,7 +158,7 @@ func (c *ServerCommand) adminFromEnv(ctx context.Context, accounts *auth.Service
 	return nil
 }
 
-func runServer(ctx context.Context, cfg server.Config, db *store.DB, accounts *auth.Service, log *slog.Logger) error {
+func runServer(ctx context.Context, cfg server.Config, db *store.DB, accounts *server.AuthService, log *slog.Logger) error {
 	srv, err := server.New(cfg, db, accounts, log)
 	if err != nil {
 		return err
@@ -220,7 +216,7 @@ func (c *PasswdCommand) Run(ctx context.Context, args []string) error {
 	if err := accounts.SetPassword(ctx, fs.Arg(0), pw); err != nil {
 		return err
 	}
-	fmt.Fprintf(c.io.Stdout, "Password updated for %q.\n", auth.NormalizeUsername(fs.Arg(0)))
+	fmt.Fprintf(c.io.Stdout, "Password updated for %q.\n", server.NormalizeUsername(fs.Arg(0)))
 	return nil
 }
 
@@ -251,7 +247,7 @@ func (c *AgentCommand) Run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	return agent.New(creds, dataDir, newLogger(c.io)).Run(ctx)
+	return agent.New(creds, dataDir, Version, newLogger(c.io)).Run(ctx)
 }
 
 // ConnectCommand pairs this machine with a server and installs the agent
@@ -300,7 +296,7 @@ func (c *ConnectCommand) Run(ctx context.Context, args []string) error {
 		fmt.Fprintf(c.io.Stdout, "Start the agent with: frpdash agent --config %s\n", credsPath)
 		return nil
 	}
-	unit := systemd.Unit{Name: "frpdash-agent", Description: "frpdash agent (frpc)",
+	unit := Unit{Name: "frpdash-agent", Description: "frpdash agent (frpc)",
 		Args: []string{"agent", "--config", credsPath, "--data-dir", dataDir}}
 	if err := unit.Install(ctx); err != nil {
 		return err
@@ -323,6 +319,6 @@ func (c *VersionCommand) Run(_ context.Context, args []string) error {
 	if err := parseFlags(newFlagSet(c.Name(), c.io.Stderr), args); err != nil {
 		return err
 	}
-	fmt.Fprintln(c.io.Stdout, version.String())
+	fmt.Fprintln(c.io.Stdout, versionString())
 	return nil
 }

@@ -1,4 +1,4 @@
-package frpbin
+package frp
 
 import (
 	"bufio"

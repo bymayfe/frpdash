@@ -1,5 +1,8 @@
-// Package server wires the VDS side together: frps, the agent listener (TLS,
-// public) and the panel (loopback only).
+// Package server is the VDS side. Server wires it together: frps, the agent
+// listener (TLS, public) and the panel (loopback only). File prefixes mark the
+// parts: auth* (accounts, sessions), fleet* (clients and services),
+// setup* (first run), agentapi_* (agent endpoints), web_* (panel and setup
+// pages), firewall* and fwsync* (host firewall), ports* (VDS port choice).
 package server
 
 import (
@@ -18,15 +21,8 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/bymayfe/frpdash/internal/firewall"
-	"github.com/bymayfe/frpdash/internal/frpbin"
-	"github.com/bymayfe/frpdash/internal/server/agentapi"
-	"github.com/bymayfe/frpdash/internal/server/auth"
-	"github.com/bymayfe/frpdash/internal/server/fleet"
-	"github.com/bymayfe/frpdash/internal/server/fwsync"
-	"github.com/bymayfe/frpdash/internal/server/setup"
-	"github.com/bymayfe/frpdash/internal/server/store"
-	"github.com/bymayfe/frpdash/internal/server/web"
+	"github.com/bymayfe/frpdash/internal/frp"
+	"github.com/bymayfe/frpdash/internal/store"
 )
 
 const (
@@ -55,7 +51,7 @@ func (c Config) Validate() error {
 		return err
 	}
 	if c.PublicHost != "" {
-		if err := setup.ValidateHost(c.PublicHost); err != nil {
+		if err := ValidateHost(c.PublicHost); err != nil {
 			return fmt.Errorf("--public-host: %w", err)
 		}
 	}
@@ -74,20 +70,20 @@ func (c Config) agentPort() (int, error) {
 type Server struct {
 	cfg      Config
 	db       *store.DB
-	accounts *auth.Service
-	setup    *setup.Service
-	fw       *fwsync.Service
+	accounts *AuthService
+	setup    *SetupService
+	fw       *FirewallSync
 	log      *slog.Logger
 }
 
 // New builds a Server over an open database.
-func New(cfg Config, db *store.DB, accounts *auth.Service, log *slog.Logger) (*Server, error) {
+func New(cfg Config, db *store.DB, accounts *AuthService, log *slog.Logger) (*Server, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	agentPort, _ := cfg.agentPort() // validated above
-	return &Server{cfg: cfg, db: db, accounts: accounts, setup: setup.NewService(db, accounts, cfg.DataDir),
-		fw: fwsync.New(db, firewall.New(), agentPort, log), log: log}, nil
+	return &Server{cfg: cfg, db: db, accounts: accounts, setup: NewSetupService(db, accounts, cfg.DataDir),
+		fw: NewFirewallSync(db, NewFirewallManager(), agentPort, log), log: log}, nil
 }
 
 // Run serves the panel at once, runs first-time setup in it if needed, then
@@ -126,7 +122,7 @@ func (s *Server) runSetup(ctx context.Context, panel *swapHandler) error {
 		return err
 	}
 	done := make(chan struct{})
-	page, err := web.NewSetup(s.setup, setup.Addresses(), s.fw, func() { close(done) }, s.log)
+	page, err := NewSetup(s.setup, Addresses(), s.fw, func() { close(done) }, s.log)
 	if err != nil {
 		return err
 	}
@@ -155,9 +151,9 @@ func (s *Server) start(ctx context.Context, g *errgroup.Group, panel *swapHandle
 
 	_, uiPort, _ := net.SplitHostPort(s.cfg.UIAddr) // validated in New
 	panelPort, _ := strconv.Atoi(uiPort)
-	fl := fleet.NewService(s.db, host, agentPort, panelPort)
+	fl := NewFleetService(s.db, host, agentPort, panelPort)
 	fl.SetHostPorts(hostPorts{})
-	hub := agentapi.NewHub(fl, s.log)
+	hub := NewHub(fl, s.log)
 	fl.SetNotifier(notifiers{hub, s.fw}) // agents get the new config; the firewall follows public ports
 
 	frps, err := s.prepareFRPS(ctx, fl)
@@ -165,9 +161,9 @@ func (s *Server) start(ctx context.Context, g *errgroup.Group, panel *swapHandle
 		return err
 	}
 	agentAddr := net.JoinHostPort(host, strconv.Itoa(agentPort))
-	hub.EnableInstall(agentapi.InstallConfig{Addr: agentAddr, Fingerprint: cert.Fingerprint,
+	hub.EnableInstall(InstallConfig{Addr: agentAddr, Fingerprint: cert.Fingerprint,
 		PublicKeyPin: cert.PublicKeyPin, Binary: s.agentBinary})
-	ui, err := web.New(s.accounts, fl, hub, frps, web.Config{AgentAddr: agentAddr, Fingerprint: cert.Fingerprint,
+	ui, err := NewUI(s.accounts, fl, hub, frps, UIConfig{AgentAddr: agentAddr, Fingerprint: cert.Fingerprint,
 		PublicKeyPin: cert.PublicKeyPin, Firewall: s.fw}, s.log)
 	if err != nil {
 		return err
@@ -187,7 +183,7 @@ func (s *Server) start(ctx context.Context, g *errgroup.Group, panel *swapHandle
 }
 
 // notifiers fans fleet changes out to several listeners.
-type notifiers []fleet.Notifier
+type notifiers []Notifier
 
 func (ns notifiers) ClientChanged(id int64) {
 	for _, n := range ns {
@@ -220,15 +216,15 @@ func (s *Server) agentBinary(arch string) (string, error) {
 		return filepath.EvalSymlinks(self)
 	}
 	p := filepath.Join(s.cfg.DataDir, DistDir, "frpdash-linux-"+arch)
-	if _, err := os.Stat(p); err != nil {
+	if _, err := os.Stat(p); err != nil { //nolint:gosec // arch is checked against installArches before this is called
 		return "", err
 	}
 	return p, nil
 }
 
 // prepareFRPS installs frps, writes its config and returns the process.
-func (s *Server) prepareFRPS(ctx context.Context, fl *fleet.Service) (*frpbin.Process, error) {
-	bin, err := frpbin.NewInstaller(filepath.Join(s.cfg.DataDir, "bin")).Ensure(ctx, "frps")
+func (s *Server) prepareFRPS(ctx context.Context, fl *FleetService) (*frp.Process, error) {
+	bin, err := frp.NewInstaller(filepath.Join(s.cfg.DataDir, "bin")).Ensure(ctx, "frps")
 	if err != nil {
 		return nil, err
 	}
@@ -241,13 +237,13 @@ func (s *Server) prepareFRPS(ctx context.Context, fl *fleet.Service) (*frpbin.Pr
 		return nil, err
 	}
 	path := filepath.Join(s.cfg.DataDir, "frps.toml")
-	if err := frpbin.WriteFileAtomic(path, body, 0o600); err != nil {
+	if err := frp.WriteFileAtomic(path, body, 0o600); err != nil {
 		return nil, err
 	}
-	if err := frpbin.Verify(ctx, bin, path); err != nil {
+	if err := frp.Verify(ctx, bin, path); err != nil {
 		return nil, err
 	}
-	return frpbin.NewProcess("frps", bin, s.log, "-c", path), nil
+	return frp.NewProcess("frps", bin, s.log, "-c", path), nil
 }
 
 // serve runs an http.Server until ctx ends, then shuts it down.

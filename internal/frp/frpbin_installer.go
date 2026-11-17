@@ -1,7 +1,8 @@
-// Package frpbin installs and runs the official frp binaries. The version is
+// This part (frpbin) installs and runs the official frp binaries. The version is
 // pinned and downloads are checked against SHA-256 sums compiled into
 // frpdash, so a tampered release or mirror cannot slip a different binary in.
-package frpbin
+
+package frp
 
 import (
 	"archive/tar"

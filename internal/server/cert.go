@@ -18,7 +18,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/bymayfe/frpdash/internal/protocol"
+	"github.com/bymayfe/frpdash/internal/frp"
 )
 
 const certValidity = 10 * 365 * 24 * time.Hour
@@ -50,7 +50,7 @@ func LoadOrCreateAgentCert(dir, host string) (AgentCert, error) {
 	if err != nil {
 		return AgentCert{}, fmt.Errorf("parse agent certificate: %w", err)
 	}
-	return AgentCert{TLS: c, Fingerprint: protocol.Fingerprint(c.Certificate[0]), PublicKeyPin: PublicKeyPin(leaf)}, nil
+	return AgentCert{TLS: c, Fingerprint: frp.Fingerprint(c.Certificate[0]), PublicKeyPin: PublicKeyPin(leaf)}, nil
 }
 
 // PublicKeyPin returns the base64 SHA-256 of a certificate's

@@ -1,6 +1,6 @@
 //go:build !linux
 
-package frpbin
+package frp
 
 import "os/exec"
 

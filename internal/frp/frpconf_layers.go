@@ -1,4 +1,4 @@
-package frpconf
+package frp
 
 import (
 	"bytes"

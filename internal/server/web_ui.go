@@ -1,6 +1,7 @@
-// Package web serves the panel: login, clients, services and settings. It
+// This part (web) serves the panel: login, clients, services and settings. It
 // listens on loopback only; the operator reaches it over an SSH tunnel.
-package web
+
+package server
 
 import (
 	"context"
@@ -13,12 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bymayfe/frpdash/internal/frpbin"
-	"github.com/bymayfe/frpdash/internal/frpconf"
-	"github.com/bymayfe/frpdash/internal/protocol"
-	"github.com/bymayfe/frpdash/internal/server/auth"
-	"github.com/bymayfe/frpdash/internal/server/fleet"
-	"github.com/bymayfe/frpdash/internal/server/store"
+	"github.com/bymayfe/frpdash/internal/frp"
+	"github.com/bymayfe/frpdash/internal/store"
 	assets "github.com/bymayfe/frpdash/web"
 )
 
@@ -35,8 +32,8 @@ type ProcessStatus interface {
 	Logs() []string
 }
 
-// Config is what the UI shows about the agent listener.
-type Config struct {
+// UIConfig is what the UI shows about the agent listener.
+type UIConfig struct {
 	AgentAddr    string // host:port agents dial
 	Fingerprint  string
 	PublicKeyPin string   // for the one-line install command
@@ -45,17 +42,17 @@ type Config struct {
 
 // UI is the panel's HTTP handler.
 type UI struct {
-	auth     *auth.Service
-	fleet    *fleet.Service
+	auth     *AuthService
+	fleet    *FleetService
 	presence Presence
 	frps     ProcessStatus
-	cfg      Config
+	cfg      UIConfig
 	log      *slog.Logger
 	pages    map[string]*template.Template
 }
 
-// New parses the embedded templates and builds the UI.
-func New(a *auth.Service, f *fleet.Service, p Presence, frps ProcessStatus, cfg Config, log *slog.Logger) (*UI, error) {
+// NewUI parses the embedded templates and builds the UI.
+func NewUI(a *AuthService, f *FleetService, p Presence, frps ProcessStatus, cfg UIConfig, log *slog.Logger) (*UI, error) {
 	u := &UI{auth: a, fleet: f, presence: p, frps: frps, cfg: cfg, log: log.With("component", "ui"),
 		pages: map[string]*template.Template{}}
 	for _, name := range []string{"login", "clients", "client-new", "pair", "client", "settings"} {
@@ -109,13 +106,13 @@ type pageData struct {
 	Client     clientView
 	Proxies    []proxyView
 	Others     []store.Client
-	Global     fleet.Global
+	Global     Global
 	PublicHost string
 	AgentAddr  string
 
 	Code       string
 	Token      string // pairing token, for polling its state
-	PairState  string // fleet.Pairing*
+	PairState  string // Pairing* constants
 	InstallCmd string
 	Expires    time.Time
 	TTL        time.Duration
@@ -159,9 +156,9 @@ func redirect(w http.ResponseWriter, r *http.Request, to string) {
 // fail shows user-input errors on the current page and hides internal ones.
 func (u *UI) fail(w http.ResponseWriter, r *http.Request, err error, retry func(msg string)) {
 	switch {
-	case errors.Is(err, fleet.ErrInvalid) && retry != nil:
-		retry(strings.TrimPrefix(err.Error(), fleet.ErrInvalid.Error()+": "))
-	case errors.Is(err, fleet.ErrInvalid):
+	case errors.Is(err, ErrInvalid) && retry != nil:
+		retry(strings.TrimPrefix(err.Error(), ErrInvalid.Error()+": "))
+	case errors.Is(err, ErrInvalid):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	case errors.Is(err, store.ErrNotFound):
 		http.NotFound(w, r)
@@ -179,7 +176,7 @@ func (u *UI) requireUser(h func(http.ResponseWriter, *http.Request, *pageData)) 
 		}
 		user, err := u.auth.SessionUser(r.Context(), token)
 		if err != nil {
-			if !errors.Is(err, auth.ErrNoSession) {
+			if !errors.Is(err, ErrNoSession) {
 				u.log.Error("session lookup", "err", err)
 			}
 			redirect(w, r, "/login")
@@ -218,7 +215,7 @@ func (u *UI) loginPage(w http.ResponseWriter, _ *http.Request) {
 func (u *UI) login(w http.ResponseWriter, r *http.Request) {
 	user, err := u.auth.Authenticate(r.Context(), r.FormValue("username"), r.FormValue("password"))
 	if err != nil {
-		if !errors.Is(err, auth.ErrInvalidCredentials) {
+		if !errors.Is(err, ErrInvalidCredentials) {
 			u.log.Error("login", "err", err)
 		}
 		u.log.Warn("failed login", "username", r.FormValue("username"))
@@ -294,9 +291,9 @@ func (u *UI) newClientPage(w http.ResponseWriter, r *http.Request, d *pageData) 
 }
 
 func (u *UI) createClient(w http.ResponseWriter, r *http.Request, d *pageData) {
-	in := fleet.ClientInput{Name: r.FormValue("name")}
+	in := ClientInput{Name: r.FormValue("name")}
 	if pmin, pmax := formInt(r, "port_min"), formInt(r, "port_max"); pmin != 0 || pmax != 0 {
-		in.PortRange = &frpconf.PortRange{Min: pmin, Max: pmax}
+		in.PortRange = &frp.PortRange{Min: pmin, Max: pmax}
 	}
 	c, err := u.fleet.CreateClient(r.Context(), in)
 	if err != nil {
@@ -331,10 +328,10 @@ func (u *UI) showPairing(w http.ResponseWriter, r *http.Request, d *pageData, c 
 		return
 	}
 	d.Client = clientView{Client: c}
-	d.Code = protocol.PairingCode{Addr: u.cfg.AgentAddr, Fingerprint: u.cfg.Fingerprint, Token: token}.Encode()
-	d.InstallCmd = protocol.InstallCommand(u.cfg.AgentAddr, u.cfg.PublicKeyPin, token)
-	d.Token, d.PairState = token, fleet.PairingWaiting
-	d.Expires, d.TTL, d.AgentAddr = expires, fleet.PairingTTL, u.cfg.AgentAddr
+	d.Code = frp.PairingCode{Addr: u.cfg.AgentAddr, Fingerprint: u.cfg.Fingerprint, Token: token}.Encode()
+	d.InstallCmd = frp.InstallCommand(u.cfg.AgentAddr, u.cfg.PublicKeyPin, token)
+	d.Token, d.PairState = token, PairingWaiting
+	d.Expires, d.TTL, d.AgentAddr = expires, PairingTTL, u.cfg.AgentAddr
 	u.render(w, "pair", "base", http.StatusOK, d)
 }
 
@@ -356,13 +353,13 @@ func (u *UI) pairStatus(w http.ResponseWriter, r *http.Request, d *pageData) {
 		u.fail(w, r, err, nil)
 		return
 	}
-	if state == fleet.PairingUsed && u.presence.Online(id) {
+	if state == PairingUsed && u.presence.Online(id) {
 		redirect(w, r, clientURL(id, "client-paired"))
 		return
 	}
 	d.Client, d.PairState = clientView{Client: c}, state
 	status := http.StatusOK
-	if state == fleet.PairingExpired {
+	if state == PairingExpired {
 		status = htmxStopPolling
 	}
 	u.render(w, "pair", "pair-status", status, d)
@@ -438,7 +435,7 @@ func (u *UI) addProxy(w http.ResponseWriter, r *http.Request, d *pageData) {
 		http.NotFound(w, r)
 		return
 	}
-	_, err := u.fleet.AddProxy(r.Context(), id, fleet.ProxyInput{
+	_, err := u.fleet.AddProxy(r.Context(), id, ProxyInput{
 		Name: r.FormValue("name"), Mode: r.FormValue("mode"), Type: r.FormValue("type"),
 		LocalIP: r.FormValue("local_ip"), LocalPort: formInt(r, "local_port"), RemotePort: formInt(r, "remote_port"),
 	})
@@ -534,7 +531,7 @@ func (u *UI) renderSettings(w http.ResponseWriter, r *http.Request, d *pageData)
 		return
 	}
 	d.PublicHost, d.AgentAddr, d.Fingerprint = u.fleet.PublicHost(), u.cfg.AgentAddr, u.cfg.Fingerprint
-	d.FRPSRunning, d.FRPSLogs, d.FRPVersion = u.frps.Running(), u.frps.Logs(), frpbin.Version
+	d.FRPSRunning, d.FRPSLogs, d.FRPVersion = u.frps.Running(), u.frps.Logs(), frp.Version
 	u.render(w, "settings", "base", http.StatusOK, d)
 }
 
